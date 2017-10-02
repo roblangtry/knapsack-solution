@@ -37,10 +37,10 @@ int main(int argc, char *argv[]){
 
 	for(int i=1;i<itemNum+1;i++){
 		for(int w=1;w<maxWeight+1;w++){
-			if(items[i].weight<=k && (m[i-1][k-items[i].weight]+items[i].value > m[i-1][k])){
-				m[i][k]=m[i-1][k-items[i].weight]+items[i].value;				
+			if(items[i].weight<=w && (m[i-1][w-items[i].weight]+items[i].value > m[i-1][w])){
+				m[i][w]=m[i-1][w-items[i].weight]+items[i].value;				
 			}else{
-				m[i][k]=m[i-1][k];
+				m[i][w]=m[i-1][w];
 			}
 		}
 	}
