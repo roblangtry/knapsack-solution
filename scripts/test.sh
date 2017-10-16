@@ -10,6 +10,7 @@ function time_func()
 function test_case()
 {
     time_func sequential $1 $2
+    time_func improved-sequential $1 $2
     time_func parralel $1 $2
 }
 
@@ -31,3 +32,18 @@ test_case 12 resources/case_2.txt
 #   ----   #
 echo "Case 3"
 test_case 1000000000 resources/case_3.txt
+#   ----   #
+#  Case 4  #
+#   ----   #
+echo "Case 4"
+test_case 9513 resources/case_4.txt
+#   ----   #
+#  Case 4  #
+#   ----   #
+echo "Case 5"
+test_case 28405 resources/case_5.txt
+#   ----   #
+#  Case 6  #
+#   ----   #
+echo "Case 6"
+test_case 24676 resources/case_6.txt
