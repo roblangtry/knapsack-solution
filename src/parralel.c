@@ -141,46 +141,41 @@ int parrallel_process_objects(int map_size, FILE * fp)
     LOG_INT(THREADS);
     LOG(" threads requested using parrallel solution\n");
     /* Knapsack solution from https://en.wikipedia.org/wiki/Knapsack_problem#0.2F1_knapsack_problem */
-    int value, weight, prev, i;
+    int i;
     int ** table;
-    int row;
     int num_rows;
     object_t * objects = read_objects(&num_rows, map_size, fp);
     table = malloc(2*sizeof(int *));
     for(i=0;i<2;i++){
         table[i]=calloc(map_size + 1, sizeof(int));
     }
-    int flux = 1;
-    weight = map_size;
-    //for(row=0;row<num_rows;row++){
-    //    flux = !flux;
-    //    prev = weight;
-    //    weight = objects[row].weight;
-    //    value = objects[row].value;
-    //    for(col=MIN(prev,weight);col<map_size;col++){
-    //        if(col>=weight)
-    //            table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
-    //        else
-    //            table[flux][col]=table[!flux][col];
-    //    }
-    //}
+    int col;
+    int row;
+    int flux;
+    int final;
+    int value;
+    int weight;
+    int prev;
+    #pragma omp parallel private(col,row,flux,prev,weight,value)
+    {
+        flux=1;
+        weight=map_size;
     for(row=0;row<num_rows;row++){
         flux = !flux;
         prev = weight;
         weight = objects[row].weight;
         value = objects[row].value;
-        #pragma omp parallel
-        {
-            int t_no = omp_get_thread_num();
-            int threads = omp_get_num_threads();
-            int col;
-            for(col=prev+t_no;col<weight;col+=threads){
-                table[flux][col]=table[!flux][col];
-            }
-            for(col=weight+t_no;col<map_size;col+=threads){
-                table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
-            }
+        #pragma omp for
+        for(col=prev;col<weight;col+=1){
+            table[flux][col]=table[!flux][col];
         }
+        #pragma omp for
+        for(col=weight;col<map_size;col+=1){
+            table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
+        }
+    }
+    #pragma omp single
+    final=flux;
     }
     return table[flux][map_size-1];
 }
