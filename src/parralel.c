@@ -36,11 +36,6 @@ typedef struct {
 } object_t;
 
 void initialise(int argc, char *argv[], int *size, FILE ** fp);
-void process_objects(int map_size, int * map, FILE * fp);
-void sequential_process_objects(int map_size, int * map, FILE * fp);
-int read_batch(object_t * batch, FILE * fp);
-void map_batch(object_t * batch, int batch_size, int ** pmaps, int * map, int map_size);
-void consolidate_batch(int ** pmaps, int * map, int map_size);
 int parrallel_process_objects(int map_size, FILE * fp);
 
 
@@ -48,7 +43,6 @@ int
 main(int argc, char *argv[])
 {
     int knapsack_size;
-    int * map;
     FILE * fp = stdin;
     initialise(argc, argv, &knapsack_size, &fp);
     LOG("INFO: Knapsack size - ");
@@ -96,7 +90,7 @@ int parrallel_process_objects(int map_size, FILE * fp)
     LOG_INT(THREADS);
     LOG(" threads requested using parrallel solution\n");
     /* Knapsack solution from https://en.wikipedia.org/wiki/Knapsack_problem#0.2F1_knapsack_problem */
-    int value, weight, pval = 10,i,o;
+    int value, weight, pval = 10,i;
     object_t * objects = malloc(sizeof(object_t)*BATCH_SIZE);
     object_t object;
     int list_size = BATCH_SIZE;
