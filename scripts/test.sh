@@ -3,17 +3,16 @@
 # Functions
 function time_func()
 {
-    local TIME=$( { time out/$1 $2 $3; } 2>&1 )
+    local TIME=$( { time $1 $2 $3; } 2>&1 )
     local TVAL=$(echo $TIME | sed 's/real 0m\([0-9.]*\)s.*/\1/')
     echo "$1: $TVAL"
 }
 function test_case()
 {
-    time_func sequential $1 $2
-    time_func improved-sequential $1 $2
-    time_func parralel $1 $2
+    for filename in out/*; do
+        time_func $filename $1 $2
+    done
 }
-
 
 # Code to run
 echo "Testing.."
