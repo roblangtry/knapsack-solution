@@ -141,7 +141,7 @@ int parrallel_process_objects(int map_size, FILE * fp)
     LOG_INT(THREADS);
     LOG(" threads requested using parrallel solution\n");
     /* Knapsack solution from https://en.wikipedia.org/wiki/Knapsack_problem#0.2F1_knapsack_problem */
-    int value, weight,i;
+    int value, weight, prev, i;
     int ** table;
     int row,col;
     int num_rows;
@@ -151,27 +151,31 @@ int parrallel_process_objects(int map_size, FILE * fp)
         table[i]=calloc(map_size + 1, sizeof(int));
     }
     int flux = 1;
+    weight = map_size;
+    //for(row=0;row<num_rows;row++){
+    //    flux = !flux;
+    //    prev = weight;
+    //    weight = objects[row].weight;
+    //    value = objects[row].value;
+    //    for(col=MIN(prev,weight);col<map_size;col++){
+    //        if(col>=weight)
+    //            table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
+    //        else
+    //            table[flux][col]=table[!flux][col];
+    //    }
+    //}
     for(row=0;row<num_rows;row++){
         flux = !flux;
+        prev = weight;
         weight = objects[row].weight;
         value = objects[row].value;
-        if(!row)
-        {
-            #pragma omp parallel for num_threads(THREADS)
-            for(col=weight;col<map_size;col++){
-                table[flux][col]=value;
-            }
+        #pragma omp parallel for
+        for(col=prev;col<weight;col++){
+            table[flux][col]=table[!flux][col];
         }
-        else
-        {
-            #pragma omp parallel for num_threads(THREADS)
-            for(col=objects[row-1].weight;col<weight;col++){
-                table[flux][col]=table[!flux][col];
-            }
-            #pragma omp parallel for num_threads(THREADS)
-            for(col=weight;col<map_size;col++){
-                table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
-            }
+        #pragma omp parallel for
+        for(col=weight;col<map_size;col++){
+            table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
         }
     }
     return table[flux][map_size-1];
