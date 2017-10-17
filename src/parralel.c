@@ -11,7 +11,7 @@
 #define END -2
 #define TRUE 1
 #define FALSE 0
-
+#define NUM_REVIEW 10 /* The number of read items to review */
 
 #ifndef DEBUG
 #define DEBUG 0
@@ -36,6 +36,7 @@ typedef struct {
 } object_t;
 
 void initialise(int argc, char *argv[], int *size, FILE ** fp);
+object_t * read_objects(int * size, int map_size, FILE * fp);
 int parrallel_process_objects(int map_size, FILE * fp);
 
 
@@ -83,20 +84,13 @@ initialise(int argc, char *argv[], int *size, FILE ** fp)
     }
 }
 
-
-int parrallel_process_objects(int map_size, FILE * fp)
+object_t * read_objects(int * size, int map_size, FILE * fp)
 {
-    LOG("INFO: ");
-    LOG_INT(THREADS);
-    LOG(" threads requested using parrallel solution\n");
-    /* Knapsack solution from https://en.wikipedia.org/wiki/Knapsack_problem#0.2F1_knapsack_problem */
-    int value, weight, pval = 10,i;
+    int pval = NUM_REVIEW;
     object_t * objects = malloc(sizeof(object_t)*BATCH_SIZE);
     object_t object;
     int list_size = BATCH_SIZE;
     int occupancy = 0;
-    int ** table;
-    int row,col;
     while(fscanf(fp, "%d %d", &object.value, &object.weight)>0)
     {
         /* Check the value is valid */
@@ -137,26 +131,44 @@ int parrallel_process_objects(int map_size, FILE * fp)
             }
         }
     }
+    *size = occupancy;
+    return objects;
+}
+
+int parrallel_process_objects(int map_size, FILE * fp)
+{
+    LOG("INFO: ");
+    LOG_INT(THREADS);
+    LOG(" threads requested using parrallel solution\n");
+    /* Knapsack solution from https://en.wikipedia.org/wiki/Knapsack_problem#0.2F1_knapsack_problem */
+    int value, weight,i;
+    int ** table;
+    int row,col;
+    int num_rows;
+    object_t * objects = read_objects(&num_rows, map_size, fp);
     table = malloc(2*sizeof(int *));
     for(i=0;i<2;i++){
         table[i]=calloc(map_size + 1, sizeof(int));
     }
     int flux = 1;
-    for(row=0;row<occupancy;row++){
+    for(row=0;row<num_rows;row++){
         flux = !flux;
         weight = objects[row].weight;
         value = objects[row].value;
         if(!row)
         {
+            #pragma omp parallel for num_threads(THREADS)
             for(col=weight;col<map_size;col++){
                 table[flux][col]=value;
             }
         }
         else
         {
+            #pragma omp parallel for num_threads(THREADS)
             for(col=objects[row-1].weight;col<weight;col++){
                 table[flux][col]=table[!flux][col];
             }
+            #pragma omp parallel for num_threads(THREADS)
             for(col=weight;col<map_size;col++){
                 table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
             }
