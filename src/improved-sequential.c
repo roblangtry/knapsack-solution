@@ -1,5 +1,17 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <omp.h>
+#include <mpi.h>
+#include <unistd.h>
+#include <string.h>
+
+#define THREADS 32
+#define BATCH_SIZE 100000
+#define EMPTY -1
+#define END -2
+#define TRUE 1
+#define FALSE 0
+
 
 #ifndef DEBUG
 #define DEBUG 0
@@ -13,8 +25,23 @@
 #define LOG_INT(x)
 #endif
 
+/* from https://stackoverflow.com/questions/3437404/min-and-max-in-c */
+#define MIN(a,b) (((a)<(b))?(a):(b))
+#define MAX(a,b) (((a)>(b))?(a):(b))
+
+
+typedef struct {
+    int value;
+    int weight;
+} object_t;
+
 void initialise(int argc, char *argv[], int *size, FILE ** fp);
 void process_objects(int map_size, int * map, FILE * fp);
+void sequential_process_objects(int map_size, int * map, FILE * fp);
+int read_batch(object_t * batch, FILE * fp);
+void map_batch(object_t * batch, int batch_size, int ** pmaps, int * map, int map_size);
+void consolidate_batch(int ** pmaps, int * map, int map_size);
+int parrallel_process_objects(int map_size, FILE * fp);
 
 
 int
@@ -27,8 +54,7 @@ main(int argc, char *argv[])
     LOG("INFO: Knapsack size - ");
     LOG_INT(knapsack_size);
     LOG("\n");
-    map = calloc(knapsack_size + 1, sizeof(int));
-    process_objects(knapsack_size, map, fp);
+    printf("%d\n", parrallel_process_objects(knapsack_size, fp));
     return 0;
 }
 
@@ -64,14 +90,23 @@ initialise(int argc, char *argv[], int *size, FILE ** fp)
 }
 
 
-void process_objects(int map_size, int * map, FILE * fp)
+int parrallel_process_objects(int map_size, FILE * fp)
 {
+    LOG("INFO: ");
+    LOG_INT(THREADS);
+    LOG(" threads requested using parrallel solution\n");
     /* Knapsack solution from https://en.wikipedia.org/wiki/Knapsack_problem#0.2F1_knapsack_problem */
-    int value, weight, pval = 10,i;
-    while(fscanf(fp, "%d %d", &value, &weight)>0)
+    int value, weight, pval = 10,i,o;
+    object_t * objects = malloc(sizeof(object_t)*BATCH_SIZE);
+    object_t object;
+    int list_size = BATCH_SIZE;
+    int occupancy = 0;
+    int ** table;
+    int row,col;
+    while(fscanf(fp, "%d %d", &object.value, &object.weight)>0)
     {
         /* Check the value is valid */
-        if(weight <= 0 || weight > map_size)
+        if(object.weight <= 0 || object.weight > map_size)
         {
             /*
             The value isn't valid either because:
@@ -79,9 +114,9 @@ void process_objects(int map_size, int * map, FILE * fp)
                 * it is larger than the knapsack size and therefore won't fit
              */
             LOG("WARNING: Invalid object with value \'");
-            LOG_INT(value);
+            LOG_INT(object.value);
             LOG("\' of weight \'");
-            LOG_INT(weight);
+            LOG_INT(object.weight);
             LOG("\' read from input.\n");
         }
         else
@@ -91,25 +126,47 @@ void process_objects(int map_size, int * map, FILE * fp)
             {
                 /* Some logging to allow debugging */
                 LOG("INFO: Object with value \'");
-                LOG_INT(value);
+                LOG_INT(object.value);
                 LOG("\' of weight \'");
-                LOG_INT(weight);
+                LOG_INT(object.weight);
                 LOG("\' read from input.\n");
                 pval--;
                 if(!pval)
                     LOG("INFO: Further input will be supressed...\n");
 
             }
-            /* Do processing */
-            for(i = map_size; i>=weight;i--)
+            objects[occupancy++] = object;
+            if(occupancy == list_size)
             {
-                if(weight <= i)
-                {
-                    if(map[i] < map[i-weight]+value)
-                        map[i] = map[i-weight]+value;
-                }
+                list_size = list_size << 1;
+                objects = realloc(objects, list_size*sizeof(object_t));
             }
         }
     }
-    printf("%d\n", map[map_size]);
+    table = malloc(2*sizeof(int *));
+    for(i=0;i<2;i++){
+        table[i]=calloc(map_size + 1, sizeof(int));
+    }
+    int flux = 1;
+    for(row=0;row<occupancy;row++){
+        flux = !flux;
+        weight = objects[row].weight;
+        value = objects[row].value;
+        if(!row)
+        {
+            for(col=weight;col<map_size;col++){
+                table[flux][col]=value;
+            }
+        }
+        else
+        {
+            for(col=objects[row-1].weight;col<weight;col++){
+                table[flux][col]=table[!flux][col];
+            }
+            for(col=weight;col<map_size;col++){
+                table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
+            }
+        }
+    }
+    return table[flux][map_size-1];
 }

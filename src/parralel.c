@@ -143,31 +143,30 @@ int parrallel_process_objects(int map_size, FILE * fp)
             }
         }
     }
-    table = malloc(occupancy*sizeof(int *));
-    for(i=0;i<occupancy;i++){
-        table[i]=malloc((1+map_size)*sizeof(int));
+    table = malloc(2*sizeof(int *));
+    for(i=0;i<2;i++){
+        table[i]=calloc(map_size + 1, sizeof(int));
     }
+    int flux = 1;
     for(row=0;row<occupancy;row++){
+        flux = !flux;
         weight = objects[row].weight;
         value = objects[row].value;
         if(!row)
         {
-            for(col=0;col<weight;col++){
-                table[row][col]=0;
-            }
             for(col=weight;col<map_size;col++){
-                table[row][col]=value;
+                table[flux][col]=value;
             }
         }
         else
         {
-            for(col=0;col<weight;col++){
-                table[row][col]=table[row-1][col];
+            for(col=objects[row-1].weight;col<weight;col++){
+                table[flux][col]=table[!flux][col];
             }
             for(col=weight;col<map_size;col++){
-                table[row][col]=MAX(table[row-1][col],value+table[row-1][col-weight]);
+                table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
             }
         }
     }
-    return table[occupancy-1][map_size-1];
+    return table[flux][map_size-1];
 }
