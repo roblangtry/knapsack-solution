@@ -16,15 +16,21 @@ parralel_debug:
 parralel:
 	mpicc -Wall -pedantic -O3 -fopenmp src/parralel.c -o out/parralel
 
+better_parralel_debug:
+	mpicc -Wall -pedantic -O3 -fopenmp src/better_parralel.c -D DEBUG -o out/better_parralel
+
+better_parralel:
+	mpicc -Wall -pedantic -O3 -fopenmp src/better_parralel.c -o out/better_parralel
+
 naive_parralel_debug:
 	mpicc -Wall -pedantic -O3 -fopenmp src/naive_parralel.c -D DEBUG -o out/naive_parralel
 
 naive_parralel:
 	mpicc -Wall -pedantic -O3 -fopenmp src/naive_parralel.c -o out/naive_parralel
 
-build_debug: sequential_debug improved_sequential_debug parralel_debug naive_parralel_debug
+build_debug: sequential_debug improved_sequential_debug parralel_debug naive_parralel_debug better_parralel_debug
 
-build: sequential improved_sequential parralel naive_parralel
+build: sequential improved_sequential parralel naive_parralel better_parralel
 
 test:
 	./scripts/test.sh
