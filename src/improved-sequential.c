@@ -157,10 +157,10 @@ int process_objects(int map_size, FILE * fp)
             for(col=objects[row-1].weight;col<weight;col++){
                 table[flux][col]=table[!flux][col];
             }
-            for(col=weight;col<map_size;col++){
+            for(col=weight;col<=map_size;col++){
                 table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
             }
         }
     }
-    return table[flux][map_size-1];
+    return table[flux][map_size];
 }

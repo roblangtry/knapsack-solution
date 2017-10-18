@@ -160,22 +160,22 @@ int parrallel_process_objects(int map_size, FILE * fp)
     {
         flux=1;
         weight=map_size;
-    for(row=0;row<num_rows;row++){
-        flux = !flux;
-        prev = weight;
-        weight = objects[row].weight;
-        value = objects[row].value;
-        #pragma omp for
-        for(col=prev;col<weight;col+=1){
-            table[flux][col]=table[!flux][col];
+        for(row=0;row<num_rows;row++){
+            flux = !flux;
+            prev = weight;
+            weight = objects[row].weight;
+            value = objects[row].value;
+            #pragma omp for
+            for(col=prev;col<weight;col+=1){
+                table[flux][col]=table[!flux][col];
+            }
+            #pragma omp for
+            for(col=weight;col<=map_size;col+=1){
+                table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
+            }
         }
-        #pragma omp for
-        for(col=weight;col<map_size;col+=1){
-            table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
-        }
+        #pragma omp single
+        final=flux;
     }
-    #pragma omp single
-    final=flux;
-    }
-    return table[flux][map_size-1];
+    return table[final][map_size];
 }

@@ -165,9 +165,9 @@ int parrallel_process_objects(int map_size, FILE * fp)
             table[flux][col]=table[!flux][col];
         }
         #pragma omp parallel for
-        for(col=weight;col<map_size;col+=1){
+        for(col=weight;col<=map_size;col+=1){
             table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
         }
     }
-    return table[flux][map_size-1];
+    return table[flux][map_size];
 }
