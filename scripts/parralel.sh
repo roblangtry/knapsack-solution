@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --time=10:00:00
-#SBATCH --nodes=4
-#SBATCH --ntasks=4
-#SBATCH --cpus-per-task=8
+#SBATCH --nodes=1
+#SBATCH --ntasks=2
+#SBATCH --cpus-per-task=4
 #SBATCH --reservation=VR0188
 
 # Code to run
