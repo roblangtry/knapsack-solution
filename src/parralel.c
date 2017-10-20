@@ -43,13 +43,18 @@ int parrallel_process_objects(int map_size, FILE * fp);
 int
 main(int argc, char *argv[])
 {
-    int knapsack_size;
+    int knapsack_size, rank, size, value;
     FILE * fp = stdin;
+    MPI_Init( &argc, &argv );
+    MPI_Comm_rank( MPI_COMM_WORLD, &rank );
     initialise(argc, argv, &knapsack_size, &fp);
     LOG("INFO: Knapsack size - ");
     LOG_INT(knapsack_size);
     LOG("\n");
-    printf("%d\n", parrallel_process_objects(knapsack_size, fp));
+    value = parrallel_process_objects(knapsack_size, fp);
+    if(!rank)
+        printf("%d\n", value);
+    MPI_Finalize();
     return 0;
 }
 
@@ -135,6 +140,19 @@ object_t * read_objects(int * size, int map_size, FILE * fp)
     return objects;
 }
 
+int get_bounds(int * upper, int * lower)
+{
+    int world_size, rank;
+    MPI_Comm_rank( MPI_COMM_WORLD, &rank );
+    MPI_Comm_size( MPI_COMM_WORLD, &world_size );
+    int width = *upper - *lower;
+    int quanta = width / world_size;
+    if(rank)
+        *lower = *upper - quanta*(world_size-rank);
+    *upper -= quanta*(world_size-rank-1);
+    return quanta;
+}
+
 int parrallel_process_objects(int map_size, FILE * fp)
 {
     LOG("INFO: ");
@@ -156,7 +174,12 @@ int parrallel_process_objects(int map_size, FILE * fp)
     int value;
     int weight;
     int prev;
-    #pragma omp parallel private(col,row,flux,prev,weight,value)
+    int lower,upper,width;
+    int rank;
+    void * target;
+    MPI_Comm_rank( MPI_COMM_WORLD, &rank );
+
+    #pragma omp parallel private(col,row,flux,prev,weight,value,lower,upper,width)
     {
         flux=1;
         weight=map_size;
@@ -165,14 +188,42 @@ int parrallel_process_objects(int map_size, FILE * fp)
             prev = weight;
             weight = objects[row].weight;
             value = objects[row].value;
+            lower = prev;
+            upper = weight;
+            width = get_bounds(&upper, &lower);
             #pragma omp for
-            for(col=prev;col<weight;col+=1){
+            for(col=lower;col<upper;col+=1){
                 table[flux][col]=table[!flux][col];
             }
+            if(rank)
+                target = table[flux]+lower;
+            else
+                target = MPI_IN_PLACE;
+            #pragma omp single
+            if(width>0){
+                MPI_Gather(target,width,MPI_INT,table[flux]+prev+((upper-lower) % width),width,MPI_INT,0,MPI_COMM_WORLD);
+            }
+
+
+            lower = weight;
+            upper = map_size + 1;
+            width = get_bounds(&upper, &lower);
             #pragma omp for
-            for(col=weight;col<=map_size;col+=1){
+            for(col=lower;col<upper;col+=1){
                 table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
             }
+            if(rank)
+                target = table[flux]+lower;
+            else
+                target = MPI_IN_PLACE;
+            #pragma omp single
+            if(width){
+                MPI_Gather(target,width,MPI_INT,table[flux]+upper-width,width,MPI_INT,0,MPI_COMM_WORLD);
+            }
+            #pragma omp single
+            MPI_Bcast(table[flux]+prev,map_size+1-prev,MPI_INT,0,MPI_COMM_WORLD);
+
+
         }
         #pragma omp single
         final=flux;
