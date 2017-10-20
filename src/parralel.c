@@ -174,7 +174,7 @@ int parrallel_process_objects(int map_size, FILE * fp)
     int value;
     int weight;
     int prev;
-    int lower,upper,width;
+    int lower,upper,width1,width2;
     int rank;
     void * offset;
     int world_size;
@@ -182,7 +182,7 @@ int parrallel_process_objects(int map_size, FILE * fp)
     MPI_Comm_rank( MPI_COMM_WORLD, &rank );
     MPI_Comm_size( MPI_COMM_WORLD, &world_size );
 
-    #pragma omp parallel private(col,row,flux,prev,weight,value,lower,upper,width, offset)
+    #pragma omp parallel private(col,row,flux,prev,weight,value,lower,upper,width1,width2, offset)
     {
         flux=1;
         weight=map_size;
@@ -193,49 +193,47 @@ int parrallel_process_objects(int map_size, FILE * fp)
             value = objects[row].value;
             lower = prev;
             upper = weight;
-            width = get_bounds(&upper, &lower);
-            #pragma omp for
+            width1 = get_bounds(&upper, &lower);
+            #pragma omp for nowait
             for(col=lower;col<upper;col+=1){
                 table[flux][col]=table[!flux][col];
             }
-            if(rank)
-                target = table[flux]+lower;
-            else
-                target = MPI_IN_PLACE;
-            #pragma omp barrier
-            #pragma omp single
-            if(width>0){
-                if(!rank)
-                    offset = table[flux] + (upper - width);
-                else
+            if(width1>0){
+                if(!rank){
+                    target = MPI_IN_PLACE;
+                    offset = table[flux] + (upper - width1);
+                }
+                else{
+                    target = table[flux]+lower;
                     offset = NULL;
-                MPI_Gather(target,width,MPI_INT,offset,width,MPI_INT,0,MPI_COMM_WORLD);
+                }
             }
 
 
 
             lower = weight;
             upper = map_size + 1;
-            width = get_bounds(&upper, &lower);
-            #pragma omp for
+            width2 = get_bounds(&upper, &lower);
+            #pragma omp for nowait
             for(col=lower;col<upper;col+=1){
                 table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
             }
-            if(rank)
-                target = table[flux]+lower;
-            else
-                target = MPI_IN_PLACE;
             #pragma omp barrier
             #pragma omp single
-            if(width>0){
-                if(!rank)
-                    offset = table[flux] + (upper - width);
-                else
-                    offset = NULL;
-                MPI_Gather(target,width,MPI_INT,offset,width,MPI_INT,0,MPI_COMM_WORLD);
-            }
-            #pragma omp single
             {
+                if(width1>0)
+                    MPI_Gather(target,width1,MPI_INT,offset,width1,MPI_INT,0,MPI_COMM_WORLD);
+                if(width2>0){
+                    if(rank){
+                        target = table[flux]+lower;
+                        offset = NULL;
+                    }
+                    else{
+                        target = MPI_IN_PLACE;
+                        offset = table[flux] + (upper - width2);
+                    }
+                    MPI_Gather(target,width2,MPI_INT,offset,width2,MPI_INT,0,MPI_COMM_WORLD);
+                }
                 offset = table[flux] + MIN(prev, weight);
                 MPI_Bcast(offset,map_size+1 - MIN(prev, weight),MPI_INT,0,MPI_COMM_WORLD);
             }
