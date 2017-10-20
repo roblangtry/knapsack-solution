@@ -1,3 +1,4 @@
+make build
 sbatch scripts/sequential.sh
 sbatch scripts/improved-sequential.sh
 sbatch scripts/naive_parralel.sh
