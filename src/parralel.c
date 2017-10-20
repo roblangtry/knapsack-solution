@@ -176,10 +176,13 @@ int parrallel_process_objects(int map_size, FILE * fp)
     int prev;
     int lower,upper,width;
     int rank;
+    void * offset;
+    int world_size;
     void * target;
     MPI_Comm_rank( MPI_COMM_WORLD, &rank );
+    MPI_Comm_size( MPI_COMM_WORLD, &world_size );
 
-    #pragma omp parallel private(col,row,flux,prev,weight,value,lower,upper,width)
+    #pragma omp parallel private(col,row,flux,prev,weight,value,lower,upper,width, offset)
     {
         flux=1;
         weight=map_size;
@@ -199,10 +202,16 @@ int parrallel_process_objects(int map_size, FILE * fp)
                 target = table[flux]+lower;
             else
                 target = MPI_IN_PLACE;
+            #pragma omp barrier
             #pragma omp single
             if(width>0){
-                MPI_Gather(target,width,MPI_INT,table[flux]+prev+((upper-lower) % width),width,MPI_INT,0,MPI_COMM_WORLD);
+                if(!rank)
+                    offset = table[flux] + (upper - width);
+                else
+                    offset = NULL;
+                MPI_Gather(target,width,MPI_INT,offset,width,MPI_INT,0,MPI_COMM_WORLD);
             }
+
 
 
             lower = weight;
@@ -216,14 +225,20 @@ int parrallel_process_objects(int map_size, FILE * fp)
                 target = table[flux]+lower;
             else
                 target = MPI_IN_PLACE;
+            #pragma omp barrier
             #pragma omp single
-            if(width){
-                MPI_Gather(target,width,MPI_INT,table[flux]+upper-width,width,MPI_INT,0,MPI_COMM_WORLD);
+            if(width>0){
+                if(!rank)
+                    offset = table[flux] + (upper - width);
+                else
+                    offset = NULL;
+                MPI_Gather(target,width,MPI_INT,offset,width,MPI_INT,0,MPI_COMM_WORLD);
             }
             #pragma omp single
-            MPI_Bcast(table[flux]+prev,map_size+1-prev,MPI_INT,0,MPI_COMM_WORLD);
-
-
+            {
+                offset = table[flux] + MIN(prev, weight);
+                MPI_Bcast(offset,map_size+1 - MIN(prev, weight),MPI_INT,0,MPI_COMM_WORLD);
+            }
         }
         #pragma omp single
         final=flux;
