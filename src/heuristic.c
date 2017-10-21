@@ -5,13 +5,16 @@
 #include <unistd.h>
 #include <string.h>
 
-#define THREADS 2
+#define THREADS 4
 #define MAX_OP_COST 3
+#define AVG_FREE_RATE 10
 #define AVG_CHEAP_RATE 1
 #define AVG_EXPENSIVE_RATE 2
-#define OMP_BARRIER_COST 1
+#define OMP_BARRIER_COST 2
 #define THREAD_COST 10
-#define PROCESSOR_INTERACTION_COST 10
+#define THREAD_INIT_COST 100
+#define PROCESSOR_INTERACTION_INIT_COST 10000
+#define PROCESSOR_INTERACTION_COST 1000
 #define BATCH_SIZE 100000
 #define EMPTY -1
 #define END -2
@@ -38,7 +41,8 @@
 /* from https://stackoverflow.com/questions/3437404/min-and-max-in-c */
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
-
+/* from https://stackoverflow.com/a/11376759 */
+#define LOG2(X) ((unsigned) (8*sizeof (unsigned long long) - __builtin_clzll((X)) - 1))
 
 typedef struct {
     int value;
@@ -153,33 +157,39 @@ object_t * read_objects(int * size, int map_size, FILE * fp)
     return objects;
 }
 
-int get_bounds(int * upper, int * lower)
+int get_bounds(int * upper, int * lower, int proc_low, int proc_high)
 {
-    int world_size, rank;
-    MPI_Comm_rank( MPI_COMM_WORLD, &rank );
-    MPI_Comm_size( MPI_COMM_WORLD, &world_size );
-    int width = *upper - *lower;
-    int quanta = width / world_size;
-    if(rank)
-        *lower = *upper - quanta*(world_size-rank);
-    *upper -= quanta*(world_size-rank-1);
-    return quanta;
+    if(*upper<proc_low)
+        *upper = proc_low;
+    if(*lower<proc_low)
+        *lower = proc_low;
+    if(*upper>proc_high)
+        *upper = proc_high;
+    if(*lower>proc_high)
+        *lower = proc_high;
+    return 0;
 }
-
 int get_mode(int map_size, int num_rows)
 {
+    long int work, work_per_row;
     int no_processors;
     MPI_Comm_size( MPI_COMM_WORLD, &no_processors );
+    work_per_row = map_size;
+    work = (work_per_row*num_rows);
     if(
-        ((map_size*AVG_CHEAP_RATE/(AVG_CHEAP_RATE+AVG_EXPENSIVE_RATE)+map_size*AVG_EXPENSIVE_RATE/(AVG_CHEAP_RATE+AVG_EXPENSIVE_RATE)*MAX_OP_COST)*num_rows)
-        <
-        (THREADS*THREAD_COST+(map_size*AVG_CHEAP_RATE/(AVG_CHEAP_RATE+AVG_EXPENSIVE_RATE)+map_size*AVG_EXPENSIVE_RATE/(AVG_CHEAP_RATE+AVG_EXPENSIVE_RATE)*MAX_OP_COST+OMP_BARRIER_COST)*num_rows/THREADS)
+        (work_per_row/THREADS*num_rows)
+        >
+        (THREADS*THREAD_COST)
+        &&
+        num_rows
+        >=
+        THREAD_INIT_COST
         )
     {
         if(
-            (THREADS*THREAD_COST+(map_size*AVG_CHEAP_RATE/(AVG_CHEAP_RATE+AVG_EXPENSIVE_RATE)+map_size*AVG_EXPENSIVE_RATE/(AVG_CHEAP_RATE+AVG_EXPENSIVE_RATE)*MAX_OP_COST+OMP_BARRIER_COST)*num_rows/THREADS)
-            <
-            (THREADS*THREAD_COST+(map_size*AVG_CHEAP_RATE/(AVG_CHEAP_RATE+AVG_EXPENSIVE_RATE)+map_size*AVG_EXPENSIVE_RATE/(AVG_CHEAP_RATE+AVG_EXPENSIVE_RATE)*MAX_OP_COST+OMP_BARRIER_COST+3*PROCESSOR_INTERACTION_COST)*num_rows/THREADS/no_processors)
+            work_per_row
+            >
+            work_per_row/no_processors + PROCESSOR_INTERACTION_INIT_COST + map_size/no_processors*PROCESSOR_INTERACTION_COST
             )
         {
             return MPMT;
@@ -192,9 +202,9 @@ int get_mode(int map_size, int num_rows)
     else
     {
         if(
-            ((map_size*AVG_CHEAP_RATE/(AVG_CHEAP_RATE+AVG_EXPENSIVE_RATE)+map_size*AVG_EXPENSIVE_RATE/(AVG_CHEAP_RATE+AVG_EXPENSIVE_RATE)*MAX_OP_COST)*num_rows)
-            <
-            ((map_size*AVG_CHEAP_RATE/(AVG_CHEAP_RATE+AVG_EXPENSIVE_RATE)+map_size*AVG_EXPENSIVE_RATE/(AVG_CHEAP_RATE+AVG_EXPENSIVE_RATE)*MAX_OP_COST+3*PROCESSOR_INTERACTION_COST)*num_rows/no_processors)
+            work_per_row
+            >
+            (work_per_row/no_processors + PROCESSOR_INTERACTION_COST)
             )
         {
             return MPST;
@@ -254,72 +264,81 @@ int MPMT_process_objects(int map_size, FILE * fp, object_t * objects, int num_ro
     int value;
     int weight;
     int prev;
-    int lower,upper,width1,width2;
+    int lower,upper;
     int rank;
-    void * offset;
     int world_size;
-    void * target;
+    int target;
     MPI_Comm_rank( MPI_COMM_WORLD, &rank );
     MPI_Comm_size( MPI_COMM_WORLD, &world_size );
+    int proc_low = rank * (map_size/world_size);
+    int proc_high;
+    int send_tag = 0;
+    int recv_tag = 0;
+    if(rank != world_size-1)
+        proc_high = (rank+1) * (map_size/world_size);
+    else
+        proc_high = map_size+1;
 
-    #pragma omp parallel private(col,row,flux,prev,weight,value,lower,upper,width1,width2, offset)
+    #pragma omp parallel private(col,row,flux,prev,weight,value,lower,upper) num_threads(THREADS)
     {
+        int delta;
+        int ndelta;
         flux=1;
         weight=map_size;
         for(row=0;row<num_rows;row++){
             flux = !flux;
+            delta = -1;
             prev = weight;
             weight = objects[row].weight;
             value = objects[row].value;
             lower = prev;
             upper = weight;
-            width1 = get_bounds(&upper, &lower);
+            get_bounds(&upper, &lower, proc_low, proc_high);;
             #pragma omp for nowait
             for(col=lower;col<upper;col+=1){
+                if(delta == -1)
+                    delta = col;
                 table[flux][col]=table[!flux][col];
             }
-            if(width1>0){
-                if(!rank){
-                    target = MPI_IN_PLACE;
-                    offset = table[flux] + (upper - width1);
-                }
-                else{
-                    target = table[flux]+lower;
-                    offset = NULL;
-                }
-            }
-
-
 
             lower = weight;
             upper = map_size + 1;
-            width2 = get_bounds(&upper, &lower);
+            get_bounds(&upper, &lower, proc_low, proc_high);
             #pragma omp for nowait
             for(col=lower;col<upper;col+=1){
+                if(delta == -1)
+                    delta = col;
                 table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
             }
             #pragma omp barrier
             #pragma omp single
             {
-                if(width1>0)
-                    MPI_Gather(target,width1,MPI_INT,offset,width1,MPI_INT,0,MPI_COMM_WORLD);
-                if(width2>0){
-                    if(rank){
-                        target = table[flux]+lower;
-                        offset = NULL;
+                if(rank){
+                    MPI_Recv(&ndelta,1,MPI_INT,rank-1,recv_tag++,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+                    if(ndelta != -1){
+                        delta = ndelta;
+                        MPI_Recv(table[flux]+delta,(map_size/world_size * rank)-delta,MPI_INT,rank-1,recv_tag++,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
                     }
-                    else{
-                        target = MPI_IN_PLACE;
-                        offset = table[flux] + (upper - width2);
-                    }
-                    MPI_Gather(target,width2,MPI_INT,offset,width2,MPI_INT,0,MPI_COMM_WORLD);
                 }
-                offset = table[flux] + MIN(prev, weight);
-                MPI_Bcast(offset,map_size+1 - MIN(prev, weight),MPI_INT,0,MPI_COMM_WORLD);
+                if(rank != world_size-1){
+                    target = rank+1;
+                    MPI_Send(&delta,1,MPI_INT,target,send_tag++,MPI_COMM_WORLD);
+                    if(delta != -1){
+                        MPI_Send(table[flux]+delta,(map_size/world_size * (rank+1))-delta,MPI_INT,target,send_tag++,MPI_COMM_WORLD);
+                    }
+                }
             }
         }
         #pragma omp single
-        final=flux;
+        {
+            final=flux;
+        }
+    }
+    if(rank == world_size-1){
+        MPI_Send(&table[final][map_size],1,MPI_INT,0,0,MPI_COMM_WORLD);
+    }
+    if(rank == 0){
+        MPI_Recv(&table[final][map_size],1,MPI_INT,world_size-1,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
     }
     return table[final][map_size];
 }
@@ -343,7 +362,7 @@ int SPMT_process_objects(int map_size, FILE * fp, object_t * objects, int num_ro
     int value;
     int weight;
     int prev;
-    #pragma omp parallel private(col,row,flux,prev,weight,value)
+    #pragma omp parallel private(col,row,flux,prev,weight,value) num_threads(THREADS)
     {
         flux=1;
         weight=map_size;
@@ -387,66 +406,70 @@ int MPST_process_objects(int map_size, FILE * fp, object_t * objects, int num_ro
     int value;
     int weight;
     int prev;
-    int lower,upper,width1,width2;
+    int lower,upper;
     int rank;
-    void * offset;
     int world_size;
-    void * target;
+    int target;
     MPI_Comm_rank( MPI_COMM_WORLD, &rank );
     MPI_Comm_size( MPI_COMM_WORLD, &world_size );
+    int proc_low = rank * (map_size/world_size);
+    int proc_high;
+    int send_tag = 0;
+    int recv_tag = 0;
+    if(rank != world_size-1)
+        proc_high = (rank+1) * (map_size/world_size);
+    else
+        proc_high = map_size+1;
+
+    int delta;
+    int ndelta;
     flux=1;
     weight=map_size;
     for(row=0;row<num_rows;row++){
         flux = !flux;
+        delta = -1;
         prev = weight;
         weight = objects[row].weight;
         value = objects[row].value;
         lower = prev;
         upper = weight;
-        width1 = get_bounds(&upper, &lower);
-        for(col=lower;col<upper;col+=1)
-        {
+        get_bounds(&upper, &lower, proc_low, proc_high);;
+        for(col=lower;col<upper;col+=1){
+            if(delta == -1)
+                delta = col;
             table[flux][col]=table[!flux][col];
         }
-        if(width1>0)
-        {
-            if(!rank)
-            {
-                target = MPI_IN_PLACE;
-                offset = table[flux] + (upper - width1);
-            }
-            else
-            {
-                target = table[flux]+lower;
-                offset = NULL;
-            }
-        }
+
         lower = weight;
         upper = map_size + 1;
-        width2 = get_bounds(&upper, &lower);
+        get_bounds(&upper, &lower, proc_low, proc_high);
         for(col=lower;col<upper;col+=1){
+            if(delta == -1)
+                delta = col;
             table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
         }
-        if(width1>0)
-            MPI_Gather(target,width1,MPI_INT,offset,width1,MPI_INT,0,MPI_COMM_WORLD);
-        if(width2>0)
-        {
-            if(rank)
-            {
-                target = table[flux]+lower;
-                offset = NULL;
+        if(rank){
+            MPI_Recv(&ndelta,1,MPI_INT,rank-1,recv_tag++,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+            if(ndelta != -1){
+                delta = ndelta;
+                MPI_Recv(table[flux]+delta,(map_size/world_size * rank)-delta,MPI_INT,rank-1,recv_tag++,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
             }
-            else
-            {
-                target = MPI_IN_PLACE;
-                offset = table[flux] + (upper - width2);
-            }
-            MPI_Gather(target,width2,MPI_INT,offset,width2,MPI_INT,0,MPI_COMM_WORLD);
         }
-        offset = table[flux] + MIN(prev, weight);
-        MPI_Bcast(offset,map_size+1 - MIN(prev, weight),MPI_INT,0,MPI_COMM_WORLD);
+        if(rank != world_size-1){
+            target = rank+1;
+            MPI_Send(&delta,1,MPI_INT,target,send_tag++,MPI_COMM_WORLD);
+            if(delta != -1){
+                MPI_Send(table[flux]+delta,(map_size/world_size * (rank+1))-delta,MPI_INT,target,send_tag++,MPI_COMM_WORLD);
+            }
+        }
     }
     final=flux;
+    if(rank == world_size-1){
+        MPI_Send(&table[final][map_size],1,MPI_INT,0,0,MPI_COMM_WORLD);
+    }
+    if(rank == 0){
+        MPI_Recv(&table[final][map_size],1,MPI_INT,world_size-1,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+    }
     return table[final][map_size];
 }
 

@@ -5,7 +5,7 @@
 #include <unistd.h>
 #include <string.h>
 
-#define THREADS 32
+#define THREADS 4
 #define BATCH_SIZE 100000
 #define EMPTY -1
 #define END -2
@@ -140,17 +140,17 @@ object_t * read_objects(int * size, int map_size, FILE * fp)
     return objects;
 }
 
-int get_bounds(int * upper, int * lower)
+int get_bounds(int * upper, int * lower, int proc_low, int proc_high)
 {
-    int world_size, rank;
-    MPI_Comm_rank( MPI_COMM_WORLD, &rank );
-    MPI_Comm_size( MPI_COMM_WORLD, &world_size );
-    int width = *upper - *lower;
-    int quanta = width / world_size;
-    if(rank)
-        *lower = *upper - quanta*(world_size-rank);
-    *upper -= quanta*(world_size-rank-1);
-    return quanta;
+    if(*upper<proc_low)
+        *upper = proc_low;
+    if(*lower<proc_low)
+        *lower = proc_low;
+    if(*upper>proc_high)
+        *upper = proc_high;
+    if(*lower>proc_high)
+        *lower = proc_high;
+    return 0;
 }
 
 int parrallel_process_objects(int map_size, FILE * fp)
@@ -174,72 +174,81 @@ int parrallel_process_objects(int map_size, FILE * fp)
     int value;
     int weight;
     int prev;
-    int lower,upper,width1,width2;
+    int lower,upper;
     int rank;
-    void * offset;
     int world_size;
-    void * target;
+    int target;
     MPI_Comm_rank( MPI_COMM_WORLD, &rank );
     MPI_Comm_size( MPI_COMM_WORLD, &world_size );
+    int proc_low = rank * (map_size/world_size);
+    int proc_high;
+    int send_tag = 0;
+    int recv_tag = 0;
+    if(rank != world_size-1)
+        proc_high = (rank+1) * (map_size/world_size);
+    else
+        proc_high = map_size+1;
 
-    #pragma omp parallel private(col,row,flux,prev,weight,value,lower,upper,width1,width2, offset)
+    #pragma omp parallel private(col,row,flux,prev,weight,value,lower,upper) num_threads(THREADS)
     {
+        int delta;
+        int ndelta;
         flux=1;
         weight=map_size;
         for(row=0;row<num_rows;row++){
             flux = !flux;
+            delta = -1;
             prev = weight;
             weight = objects[row].weight;
             value = objects[row].value;
             lower = prev;
             upper = weight;
-            width1 = get_bounds(&upper, &lower);
+            get_bounds(&upper, &lower, proc_low, proc_high);;
             #pragma omp for nowait
             for(col=lower;col<upper;col+=1){
+                if(delta == -1)
+                    delta = col;
                 table[flux][col]=table[!flux][col];
             }
-            if(width1>0){
-                if(!rank){
-                    target = MPI_IN_PLACE;
-                    offset = table[flux] + (upper - width1);
-                }
-                else{
-                    target = table[flux]+lower;
-                    offset = NULL;
-                }
-            }
-
-
 
             lower = weight;
             upper = map_size + 1;
-            width2 = get_bounds(&upper, &lower);
+            get_bounds(&upper, &lower, proc_low, proc_high);
             #pragma omp for nowait
             for(col=lower;col<upper;col+=1){
+                if(delta == -1)
+                    delta = col;
                 table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
             }
             #pragma omp barrier
             #pragma omp single
             {
-                if(width1>0)
-                    MPI_Gather(target,width1,MPI_INT,offset,width1,MPI_INT,0,MPI_COMM_WORLD);
-                if(width2>0){
-                    if(rank){
-                        target = table[flux]+lower;
-                        offset = NULL;
+                if(rank){
+                    MPI_Recv(&ndelta,1,MPI_INT,rank-1,recv_tag++,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+                    if(ndelta != -1){
+                        delta = ndelta;
+                        MPI_Recv(table[flux]+delta,(map_size/world_size * rank)-delta,MPI_INT,rank-1,recv_tag++,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
                     }
-                    else{
-                        target = MPI_IN_PLACE;
-                        offset = table[flux] + (upper - width2);
-                    }
-                    MPI_Gather(target,width2,MPI_INT,offset,width2,MPI_INT,0,MPI_COMM_WORLD);
                 }
-                offset = table[flux] + MIN(prev, weight);
-                MPI_Bcast(offset,map_size+1 - MIN(prev, weight),MPI_INT,0,MPI_COMM_WORLD);
+                if(rank != world_size-1){
+                    target = rank+1;
+                    MPI_Send(&delta,1,MPI_INT,target,send_tag++,MPI_COMM_WORLD);
+                    if(delta != -1){
+                        MPI_Send(table[flux]+delta,(map_size/world_size * (rank+1))-delta,MPI_INT,target,send_tag++,MPI_COMM_WORLD);
+                    }
+                }
             }
         }
         #pragma omp single
-        final=flux;
+        {
+            final=flux;
+        }
+    }
+    if(rank == world_size-1){
+        MPI_Send(&table[final][map_size],1,MPI_INT,0,0,MPI_COMM_WORLD);
+    }
+    if(rank == 0){
+        MPI_Recv(&table[final][map_size],1,MPI_INT,world_size-1,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
     }
     return table[final][map_size];
 }

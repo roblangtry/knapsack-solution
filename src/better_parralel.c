@@ -5,7 +5,7 @@
 #include <unistd.h>
 #include <string.h>
 
-#define THREADS 32
+#define THREADS 4
 #define BATCH_SIZE 100000
 #define EMPTY -1
 #define END -2
@@ -156,7 +156,7 @@ int parrallel_process_objects(int map_size, FILE * fp)
     int value;
     int weight;
     int prev;
-    #pragma omp parallel private(col,row,flux,prev,weight,value)
+    #pragma omp parallel private(col,row,flux,prev,weight,value) num_threads(THREADS)
     {
         flux=1;
         weight=map_size;
@@ -165,14 +165,15 @@ int parrallel_process_objects(int map_size, FILE * fp)
             prev = weight;
             weight = objects[row].weight;
             value = objects[row].value;
-            #pragma omp for
+            #pragma omp for nowait
             for(col=prev;col<weight;col+=1){
                 table[flux][col]=table[!flux][col];
             }
-            #pragma omp for
+            #pragma omp for nowait
             for(col=weight;col<=map_size;col+=1){
                 table[flux][col]=MAX(table[!flux][col],value+table[!flux][col-weight]);
             }
+            #pragma omp barrier
         }
         #pragma omp single
         final=flux;
