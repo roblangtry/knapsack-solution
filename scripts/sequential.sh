@@ -3,7 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --reservation=VR0188
+#SBATCH --mem-per-cpu=2000
 
 # Code to run
 echo "    ---    "
