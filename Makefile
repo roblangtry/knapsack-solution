@@ -28,9 +28,15 @@ naive_parralel_debug:
 naive_parralel:
 	mpicc -Wall -pedantic -O3 -fopenmp src/naive_parralel.c -o out/naive_parralel
 
-build_debug: sequential_debug improved_sequential_debug parralel_debug naive_parralel_debug better_parralel_debug
+heuristic_debug:
+	mpicc -Wall -pedantic -O3 -fopenmp src/heuristic.c -D DEBUG -o out/heuristic
 
-build: sequential improved_sequential parralel naive_parralel better_parralel
+heuristic:
+	mpicc -Wall -pedantic -O3 -fopenmp src/heuristic.c -o out/heuristic
+
+build_debug: sequential_debug improved_sequential_debug parralel_debug naive_parralel_debug better_parralel_debug heuristic_debug
+
+build: sequential improved_sequential parralel naive_parralel better_parralel heuristic
 
 test:
 	./scripts/test.sh
