@@ -43,7 +43,7 @@ int parrallel_process_objects(int map_size, FILE * fp);
 int
 main(int argc, char *argv[])
 {
-    int knapsack_size, rank, size, value;
+    int knapsack_size, rank, value;
     FILE * fp = stdin;
     MPI_Init( &argc, &argv );
     MPI_Comm_rank( MPI_COMM_WORLD, &rank );
